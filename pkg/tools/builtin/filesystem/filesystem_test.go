@@ -434,6 +434,58 @@ func TestFilesystemTool_ReadMultipleFiles(t *testing.T) {
 	assert.Contains(t, result.Output, "not found")
 }
 
+func TestFilesystemTool_ReadMultipleFiles_JSON(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	tool := New(tmpDir)
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("Content 1"), 0o644))
+
+	result, err := tool.handleReadMultipleFiles(t.Context(), ReadMultipleFilesArgs{
+		Paths: []string{"file1.txt", "nonexistent.txt"},
+		JSON:  true,
+	})
+	require.NoError(t, err)
+
+	var got []FileContent
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &got))
+	assert.Equal(t, []FileContent{
+		{Path: "file1.txt", Content: "Content 1"},
+		{Path: "nonexistent.txt", Content: "not found", Error: "not found"},
+	}, got)
+
+	result, err = tool.handleReadMultipleFiles(t.Context(), ReadMultipleFilesArgs{JSON: true})
+	require.NoError(t, err)
+	assert.JSONEq(t, "[]", result.Output)
+}
+
+func TestFilesystemTool_ReadMultipleFiles_OutputSchema(t *testing.T) {
+	t.Parallel()
+	tool := New(t.TempDir())
+
+	allTools, err := tool.Tools(t.Context())
+	require.NoError(t, err)
+
+	idx := slices.IndexFunc(allTools, func(tl tools.Tool) bool { return tl.Name == ToolNameReadMultipleFiles })
+	require.GreaterOrEqual(t, idx, 0)
+
+	schema, err := tools.SchemaToMap(allTools[idx].OutputSchema)
+	require.NoError(t, err)
+	assert.Equal(t, "string", schema["type"])
+	assert.Equal(t, "application/json", schema["contentMediaType"])
+
+	content, ok := schema["contentSchema"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "array", content["type"])
+	items, ok := content["items"].(map[string]any)
+	require.True(t, ok)
+	props, ok := items["properties"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, props, "path")
+	assert.Contains(t, props, "content")
+	assert.Contains(t, props, "error")
+}
+
 func TestFilesystemTool_ListDirectory(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()

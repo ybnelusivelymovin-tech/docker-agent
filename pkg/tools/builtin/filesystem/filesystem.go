@@ -282,6 +282,28 @@ type ReadMultipleFilesMeta struct {
 	Files []ReadFileMeta `json:"files"`
 }
 
+// FileContent is one entry of read_multiple_files' JSON output.
+type FileContent struct {
+	Path    string `json:"path" jsonschema:"Requested path"`
+	Content string `json:"content" jsonschema:"File content, or the error message when the file could not be read"`
+	Error   string `json:"error,omitempty" jsonschema:"Set when the file could not be read"`
+}
+
+// readMultipleFilesOutputSchema describes the string returned by
+// read_multiple_files: plain text by default, or a JSON-encoded []FileContent
+// when the json argument is set.
+func readMultipleFilesOutputSchema() map[string]any {
+	return map[string]any{
+		"type":             "string",
+		"description":      "Concatenated file contents with '=== path ===' headers, or, when json is true, a JSON array of {path, content, error?} objects.",
+		"contentMediaType": "application/json",
+		"contentSchema": map[string]any{
+			"type":  "array",
+			"items": tools.MustSchemaFor[FileContent](),
+		},
+	}
+}
+
 type SearchFilesContentArgs struct {
 	Path            string   `json:"path" jsonschema:"Starting directory"`
 	Query           string   `json:"query" jsonschema:"Text or regex to search"`
@@ -522,12 +544,11 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 			},
 		},
 		{
-			Name:        ToolNameReadMultipleFiles,
-			Category:    "filesystem",
-			Description: "Read the contents of multiple files simultaneously.",
-			Parameters:  tools.MustSchemaFor[ReadMultipleFilesArgs](),
-			// TODO(dga): depends on the json param
-			OutputSchema: tools.MustSchemaFor[string](),
+			Name:         ToolNameReadMultipleFiles,
+			Category:     "filesystem",
+			Description:  "Read the contents of multiple files simultaneously.",
+			Parameters:   tools.MustSchemaFor[ReadMultipleFilesArgs](),
+			OutputSchema: readMultipleFilesOutputSchema(),
 			Handler:      tools.NewHandler(t.handleReadMultipleFiles),
 			Annotations: tools.ToolAnnotations{
 				ReadOnlyHint: true,
@@ -1231,12 +1252,7 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 			attribute.StringSlice("cagent.tool.filesystem.paths", cappedPaths(args.Paths)),
 		)
 	}
-	type PathContent struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-
-	var contents []PathContent
+	contents := make([]FileContent, 0, len(args.Paths))
 	var meta ReadMultipleFilesMeta
 
 	for _, path := range args.Paths {
@@ -1249,9 +1265,10 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 		resolvedPath, err := t.resolveAndCheckPath(path)
 		if err != nil {
 			errMsg := err.Error()
-			contents = append(contents, PathContent{
+			contents = append(contents, FileContent{
 				Path:    path,
 				Content: errMsg,
+				Error:   errMsg,
 			})
 			entry.Error = errMsg
 			meta.Files = append(meta.Files, entry)
@@ -1264,9 +1281,10 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 			if errors.Is(err, fs.ErrNotExist) {
 				errMsg = "not found"
 			}
-			contents = append(contents, PathContent{
+			contents = append(contents, FileContent{
 				Path:    path,
 				Content: errMsg,
+				Error:   errMsg,
 			})
 			entry.Error = errMsg
 			meta.Files = append(meta.Files, entry)
@@ -1274,7 +1292,7 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 		}
 
 		text := string(content)
-		contents = append(contents, PathContent{
+		contents = append(contents, FileContent{
 			Path:    path,
 			Content: text,
 		})
