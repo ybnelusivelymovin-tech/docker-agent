@@ -434,6 +434,48 @@ func TestFilesystemTool_ReadMultipleFiles(t *testing.T) {
 	assert.Contains(t, result.Output, "not found")
 }
 
+func TestFilesystemTool_ReadMultipleFiles_Images(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	tool := New(tmpDir)
+
+	pngData := createTestPNG(t, 10, 10)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "a.png"), pngData, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "b.jpg"), createTestJPEG(t, 10, 10), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "notes.txt"), []byte("hello"), 0o644))
+
+	result, err := tool.handleReadMultipleFiles(t.Context(), ReadMultipleFilesArgs{
+		Paths: []string{"a.png", "notes.txt", "b.jpg", "missing.png"},
+	})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	require.Len(t, result.Images, 2)
+	for _, img := range result.Images {
+		assert.NotEmpty(t, img.Data)
+		assert.True(t, img.MimeType == "image/png" || img.MimeType == "image/jpeg")
+	}
+
+	assert.Contains(t, result.Output, "=== a.png ===\nRead image file a.png")
+	assert.Contains(t, result.Output, "=== b.jpg ===\nRead image file b.jpg")
+	assert.Contains(t, result.Output, "hello")
+	assert.Contains(t, result.Output, "=== missing.png ===\nnot found")
+	assert.NotContains(t, result.Output, string(pngData[:8]))
+
+	meta, ok := result.Meta.(ReadMultipleFilesMeta)
+	require.True(t, ok)
+	require.Len(t, meta.Files, 4)
+	assert.Empty(t, meta.Files[0].Error)
+	assert.Equal(t, "not found", meta.Files[3].Error)
+
+	result, err = tool.handleReadMultipleFiles(t.Context(), ReadMultipleFilesArgs{
+		Paths: []string{"a.png"},
+		JSON:  true,
+	})
+	require.NoError(t, err)
+	require.Len(t, result.Images, 1)
+	assert.Contains(t, result.Output, `"content":"Read image file a.png`)
+}
+
 func TestFilesystemTool_ListDirectory(t *testing.T) {
 	t.Parallel()
 	tmpDir := t.TempDir()
