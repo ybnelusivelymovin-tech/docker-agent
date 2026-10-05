@@ -546,7 +546,7 @@ func (t *ToolSet) Tools(context.Context) ([]tools.Tool, error) {
 		{
 			Name:         ToolNameReadMultipleFiles,
 			Category:     "filesystem",
-			Description:  "Read the contents of multiple files simultaneously.",
+			Description:  "Read the contents of multiple files simultaneously. Images (jpg, png, gif, webp) are returned as image content that you can view directly.",
 			Parameters:   tools.MustSchemaFor[ReadMultipleFilesArgs](),
 			OutputSchema: readMultipleFilesOutputSchema(),
 			Handler:      tools.NewHandler(t.handleReadMultipleFiles),
@@ -1253,6 +1253,7 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 		)
 	}
 	contents := make([]FileContent, 0, len(args.Paths))
+	var images []tools.ImageContent
 	var meta ReadMultipleFilesMeta
 
 	for _, path := range args.Paths {
@@ -1271,6 +1272,22 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 				Error:   errMsg,
 			})
 			entry.Error = errMsg
+			meta.Files = append(meta.Files, entry)
+			continue
+		}
+
+		if info, err := t.stat(resolvedPath); err == nil && info.Mode().IsRegular() && chat.IsImageFile(resolvedPath) {
+			res, err := t.readImageFile(resolvedPath, path)
+			if err != nil {
+				return nil, err
+			}
+			fc := FileContent{Path: path, Content: res.Output}
+			if res.IsError {
+				fc.Error = res.Output
+				entry.Error = res.Output
+			}
+			contents = append(contents, fc)
+			images = append(images, res.Images...)
 			meta.Files = append(meta.Files, entry)
 			continue
 		}
@@ -1317,6 +1334,7 @@ func (t *ToolSet) handleReadMultipleFiles(ctx context.Context, args ReadMultiple
 
 	return &tools.ToolCallResult{
 		Output: output,
+		Images: images,
 		Meta:   meta,
 	}, nil
 }
